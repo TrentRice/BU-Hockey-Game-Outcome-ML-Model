@@ -1,79 +1,136 @@
-# Data Project Template
+# ML Project Template
 
-<a target="_blank" href="https://datalumina.com/">
-    <img src="https://img.shields.io/badge/Datalumina-Project%20Template-2856f7" alt="Datalumina Project" />
-</a>
+A reusable scaffold for end-to-end ML projects: data pipeline → experimentation →
+containerized deployment → CI/CD → monitoring. Use this as a starting point rather
+than rebuilding the same MLOps skeleton from scratch each time.
 
-## Cookiecutter Data Science
-This project template is a simplified version of the [Cookiecutter Data Science](https://cookiecutter-data-science.drivendata.org) template, created to suit the needs of Datalumina and made available as a GitHub template.
+> Click **"Use this template"** on GitHub to start a new project from this repo.
+> See [`TEMPLATE_USAGE.md`](TEMPLATE_USAGE.md) for the setup checklist.
 
-## Adjusting .gitignore
+---
 
-Ensure you adjust the `.gitignore` file according to your project needs. For example, since this is a template, the `/data/` folder is commented out and data will not be exlucded from source control:
+## What this template gives you
 
-```plaintext
-# exclude data from source control by default
-# /data/
+- A clean separation between data ingestion, feature engineering, modeling, and
+  serving — so each stage can be developed, tested, and swapped independently
+- Experiment tracking wired up out of the box (MLflow: tracking server + Postgres
+  backend + model registry)
+- A containerized FastAPI serving app
+- A CI/CD pipeline (GitHub Actions → Docker → ECR → ECS Fargate) so "deploy to
+  production" isn't an afterthought
+- A monitoring stage as a first-class part of the project, not something bolted on
+  after the fact
+
+---
+
+## Architecture
+
+```
+Data source(s)
+      │
+      ▼
+data/raw → data/interim → data/processed
+      │
+      ▼
+Feature engineering
+      │
+      ▼
+Model training  ──────────►  Experiment tracking (MLflow)
+      │                              │
+      ▼                              ▼
+Model evaluation              Model registry
+                                      │
+                                      ▼
+                          Serving app (FastAPI, Docker)
+                                      │
+                                      ▼
+                   CI/CD (GitHub Actions) → ECR → ECS Fargate
+                                      │
+                                      ▼
+                          Monitoring (drift / performance over time)
 ```
 
-Typically, you want to exclude this folder if it contains either sensitive data that you do not want to add to version control or large files.
+---
 
-## Duplicating the .env File
-To set up your environment variables, you need to duplicate the `.env.example` file and rename it to `.env`. You can do this manually or using the following terminal command:
+## Repo structure
+
+```
+project-name/
+├── .github/workflows/     # CI (lint/test/build) and CD (deploy) pipelines
+├── data/                  # raw/interim/processed — gitignored, populated by ingestion scripts
+├── src/
+│   ├── ingestion/         # data collection / loading
+│   ├── features/          # feature engineering
+│   ├── models/            # training scripts
+│   ├── evaluation/        # metrics, validation, backtesting
+│   └── serving/           # FastAPI app
+├── notebooks/             # exploration only — nothing production runs from here
+├── tests/                 # mirrors src/ structure
+├── monitoring/            # scheduled drift / performance checks
+├── infra/terraform/       # AWS infra as code (ECR, ECS, ALB)
+├── Dockerfile
+├── docker-compose.yml     # local: API + MLflow server + Postgres
+├── pyproject.toml
+└── README.md
+```
+
+---
+
+## Setup
+
+### Prerequisites
+- Python 3.11+
+- Docker + Docker Compose
+- [uv](https://github.com/astral-sh/uv) or Poetry
+- AWS CLI configured, if deploying (not needed for local dev)
+
+### Local development
 
 ```bash
-cp .env.example .env # Linux, macOS, Git Bash, WSL
-copy .env.example .env # Windows Command Prompt
+git clone https://github.com/<your-username>/<project-name>.git
+cd <project-name>
+
+uv sync            # or: poetry install
+
+# spin up the local stack — API + MLflow tracking server + Postgres
+docker compose up --build
 ```
 
-This command creates a copy of `.env.example` and names it `.env`, allowing you to configure your environment variables specific to your setup.
+| Service | URL | Purpose |
+|---|---|---|
+| FastAPI app | http://localhost:8000/docs | Prediction API (Swagger UI) |
+| MLflow UI | http://localhost:5000 | Experiment tracking / model registry |
+| Postgres | localhost:5432 | MLflow backend store |
 
+### Pipeline commands (rename/replace with your actual scripts)
 
-## Project Organization
-
-```
-├── LICENSE            <- Open-source license if one is chosen
-├── README.md          <- The top-level README for developers using this project
-├── data
-│   ├── external       <- Data from third party sources
-│   ├── interim        <- Intermediate data that has been transformed
-│   ├── processed      <- The final, canonical data sets for modeling
-│   └── raw            <- The original, immutable data dump
-│
-├── models             <- Trained and serialized models, model predictions, or model summaries
-│
-├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
-│                         the creator's initials, and a short `-` delimited description, e.g.
-│                         `1.0-jqp-initial-data-exploration`
-│
-├── references         <- Data dictionaries, manuals, and all other explanatory materials
-│
-├── reports            <- Generated analysis as HTML, PDF, LaTeX, etc.
-│   └── figures        <- Generated graphics and figures to be used in reporting
-│
-├── requirements.txt   <- The requirements file for reproducing the analysis environment, e.g.
-│                         generated with `pip freeze > requirements.txt`
-│
-└── src                         <- Source code for this project
-    │
-    ├── __init__.py             <- Makes src a Python module
-    │
-    ├── config.py               <- Store useful variables and configuration
-    │
-    ├── dataset.py              <- Scripts to download or generate data
-    │
-    ├── features.py             <- Code to create features for modeling
-    │
-    │    
-    ├── modeling                
-    │   ├── __init__.py 
-    │   ├── predict.py          <- Code to run model inference with trained models          
-    │   └── train.py            <- Code to train models
-    │
-    ├── plots.py                <- Code to create visualizations 
-    │
-    └── services                <- Service classes to connect with external platforms, tools, or APIs
-        └── __init__.py 
+```bash
+python -m src.ingestion.load_data
+python -m src.features.build_features
+python -m src.models.train --model <model_name>
+pytest
 ```
 
---------
+---
+
+## CI/CD
+
+- **`ci.yml`** — runs on every PR: lint (`ruff`), unit tests (`pytest`), Docker build,
+  smoke test against the built image.
+- **`cd.yml`** — runs on merge to `main`: pushes image to Amazon ECR, deploys to ECS
+  Fargate via `infra/terraform/`.
+
+---
+
+## Monitoring
+
+`monitoring/` holds a scheduled job that compares live predictions/outcomes against
+training-time distributions and generates a drift report (e.g. via
+[Evidently](https://www.evidentlyai.com/)). Swap the preset (data drift, classification,
+regression, etc.) to match your model type.
+
+---
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
